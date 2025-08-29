@@ -113,7 +113,7 @@ fn transitions_block_parser(i: &str) -> IResult<&str, Vec<ParsedTransition>> {
 }
 
 fn start_block_parser(i: &str) -> IResult<&str, String> {
-    let (i, _) = (line_parser, tag("start:")).parse(i)?;
+    let (i, _) = (line_parser, tag("start:"), blank_space_parser).parse(i)?;
     state_name_parser(i)
 }
 
@@ -202,25 +202,34 @@ impl Hash for Transition {
 
 #[derive(Debug)]
 struct FSM {
-    start_state: Option<State>,
+    start_state: State,
     states: HashSet<State>,
     transitions: HashSet<Transition>,
+    input_alphabet: HashSet<char>,
 }
 
 impl FSM {
-    fn run(&self, input: String) -> bool {
-        let mut current_state = self.start_state;
+    fn run(&self, input: String) -> Result<bool, FSMError> {
+        let mut current_state = self.start_state.to_owned();
         for c in input.chars() {
+            if !self.input_alphabet.to_owned().contains(&c) {
+                return Err(FSMError::CharNotInInputAlphabet(c));
+            }
             let transition_pattern = Transition {
                 input: c,
-                start_state: current_state,
-                end_state: State::State(""),
+                start_state: current_state.to_owned(),
+                end_state: State::State(String::from("")),
             };
             let transition = self
                 .transitions
-                .get(transition_pattern)
-                .expect("This should always exist as the FSM should be well formed");
+                .get(&transition_pattern)
+                .expect("Transition should always exist if the FSM should be well formed");
+            current_state = transition.end_state.to_owned();
         }
+        Ok(match current_state {
+            State::State(_) => false,
+            State::AcceptState(_) => true,
+        })
     }
 }
 
@@ -230,6 +239,7 @@ enum FSMError {
     ExtraTransition(ParsedTransition, ParsedTransition),
     UnknownState(String),
     NoStartState,
+    CharNotInInputAlphabet(char),
 }
 
 impl std::error::Error for FSMError {}
@@ -243,28 +253,28 @@ impl Display for FSMError {
             Self::ExtraTransition(a, b) => write!(f, "Transition {} and {} conflict", a, b),
             Self::UnknownState(name) => write!(f, "Unknown state '{}'", name),
             Self::NoStartState => write!(f, "No start state set"),
+            Self::CharNotInInputAlphabet(c) => write!(f, "'{}' not in input alphabet", c),
         }
     }
 }
 
 fn validate_parsed_fsm(parsed_fsm: ParsedFSM) -> Result<FSM, FSMError> {
-    let mut fsm = FSM {
-        start_state: None,
-        states: HashSet::new(),
-        transitions: HashSet::new(),
-    };
+    let mut start_state = None;
+    let mut states = HashSet::new();
+    let mut transitions = HashSet::new();
+
     for state in parsed_fsm.states {
         match state {
             ParsedState::State(name) => {
-                fsm.states.insert(State::State(name.to_owned()));
+                states.insert(State::State(name.to_owned()));
                 if name == parsed_fsm.start_state {
-                    fsm.start_state = Some(State::State(name))
+                    start_state = Some(State::State(name))
                 }
             }
             ParsedState::AcceptState(name) => {
-                fsm.states.insert(State::AcceptState(name.to_owned()));
+                states.insert(State::AcceptState(name.to_owned()));
                 if name == parsed_fsm.start_state {
-                    fsm.start_state = Some(State::AcceptState(name))
+                    start_state = Some(State::AcceptState(name))
                 }
             }
         };
@@ -275,8 +285,8 @@ fn validate_parsed_fsm(parsed_fsm: ParsedFSM) -> Result<FSM, FSMError> {
         input_alphabet.insert(transition.input);
     }
 
-    for input_character in input_alphabet {
-        for state in &fsm.states {
+    for input_character in input_alphabet.to_owned() {
+        for state in states.to_owned() {
             let found: Vec<&ParsedTransition> = parsed_fsm
                 .transitions
                 .iter()
@@ -291,8 +301,7 @@ fn validate_parsed_fsm(parsed_fsm: ParsedFSM) -> Result<FSM, FSMError> {
                 }
                 1 => {
                     let end_state_name = found.first().unwrap().end_state.to_owned();
-                    if let Some(end_state) = fsm
-                        .states
+                    if let Some(end_state) = states
                         .iter()
                         .filter(|state| match state {
                             State::State(name) => name == &end_state_name,
@@ -301,7 +310,7 @@ fn validate_parsed_fsm(parsed_fsm: ParsedFSM) -> Result<FSM, FSMError> {
                         .collect::<Vec<&State>>()
                         .first()
                     {
-                        fsm.transitions.insert(Transition {
+                        transitions.insert(Transition {
                             input: input_character,
                             start_state: state.to_owned(),
                             end_state: end_state.to_owned().to_owned(),
@@ -320,22 +329,28 @@ fn validate_parsed_fsm(parsed_fsm: ParsedFSM) -> Result<FSM, FSMError> {
         }
     }
 
-    if fsm.start_state == None {
+    if let Some(start_state) = start_state {
+        Ok(FSM {
+            start_state,
+            states,
+            transitions,
+            input_alphabet,
+        })
+    } else {
         return Err(FSMError::NoStartState);
     }
-
-    Ok(fsm)
 }
 
 fn main() -> Result<()> {
-    let (_, parsed_fsm) = definition_parser.parse("states:\n\tA\n\tB\n\tfinal: C\n\ntransitions:\n\t0: A -> B\n\t0: B -> C\n\t0: C -> A\n\t1: B -> A\n\t1: C -> B\n\t1: A -> C")?;
+    let (_, parsed_fsm) = definition_parser.parse("states:\n\tA\n\tB\n\tfinal: C\n\ntransitions:\n\t0: A -> B\n\t0: B -> C\n\t0: C -> A\n\t1: B -> A\n\t1: C -> B\n\t1: A -> C\n\nstart: A")?;
     let fsm = validate_parsed_fsm(parsed_fsm)?;
-    println!("{:?}", fsm);
 
     println!("Enter input string:");
     let mut buffer = String::new();
     let stdin = io::stdin();
     stdin.read_line(&mut buffer)?;
+
+    println!("{}", fsm.run(buffer.trim_end().to_string())?);
 
     Ok(())
 }
