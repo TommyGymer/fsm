@@ -22,7 +22,7 @@ pub struct ParsedTransition {
 }
 
 impl Display for ParsedTransition {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt<'a>(&self, f: &mut Formatter<'a>) -> fmt::Result {
         write!(
             f,
             "{}: {} -> {}",
@@ -38,43 +38,46 @@ pub struct ParsedFSM {
     pub transitions: Vec<ParsedTransition>,
 }
 
-fn line_parser(i: &str) -> IResult<&str, ()> {
+fn line_parser<'a>(i: &'a str) -> IResult<&'a str, ()> {
     let (i, _) = many0(is_a("\r\n\0")).parse(i)?;
     Ok((i, ()))
 }
 
-fn blank_space_parser(i: &str) -> IResult<&str, ()> {
+fn blank_space_parser<'a>(i: &'a str) -> IResult<&'a str, ()> {
     let (i, _) = many0(is_a(" \t")).parse(i)?;
     Ok((i, ()))
 }
 
-fn state_name_parser(i: &str) -> IResult<&str, String> {
-    let (i, name) = (is_not(" \t\r\n:")).parse(i)?;
+fn indent_parser<'a>(i: &'a str) -> IResult<&'a str, ()> {
+    let (i, _) = many1(is_a(" \t")).parse(i)?;
+    Ok((i, ()))
+}
+
+fn state_name_parser<'a>(i: &'a str) -> IResult<&'a str, String> {
+    let (i, name) = is_not(" \t\r\n:")(i)?;
     Ok((i, String::from(name)))
 }
 
-fn state_parser(i: &str) -> IResult<&str, ParsedState> {
-    if let Ok((i, Some(_))) =
-        (opt((char::<&str, nom::error::Error<&str>>('\t'), tag("final:")))).parse(i)
-    {
+fn state_parser<'a>(i: &'a str) -> IResult<&'a str, ParsedState> {
+    if let Ok((i, Some(_))) = (opt((indent_parser, tag("final:")))).parse(i) {
         let (i, _) = blank_space_parser(i)?;
         let (i, name) = state_name_parser(i)?;
         let (i, _) = line_parser(i)?;
         Ok((i, ParsedState::AcceptState(String::from(name))))
     } else {
-        let (i, _) = char('\t')(i)?;
+        let (i, _) = indent_parser(i)?;
         let (i, name) = state_name_parser(i)?;
         let (i, _) = line_parser(i)?;
         Ok((i, ParsedState::State(String::from(name))))
     }
 }
 
-fn state_block_parser(i: &str) -> IResult<&str, Vec<ParsedState>> {
+fn state_block_parser<'a>(i: &'a str) -> IResult<&'a str, Vec<ParsedState>> {
     let (i, _) = (line_parser, tag("states:"), line_parser).parse(i)?;
     many0(state_parser).parse(i)
 }
 
-fn input_char_parser(i: &str) -> IResult<&str, char> {
+fn input_char_parser<'a>(i: &'a str) -> IResult<&'a str, char> {
     let (i, (_, c, _, _)) = (
         blank_space_parser,
         none_of(" \t\r\n:"),
@@ -85,7 +88,7 @@ fn input_char_parser(i: &str) -> IResult<&str, char> {
     Ok((i, c))
 }
 
-fn transition_parser(i: &str) -> IResult<&str, ParsedTransition> {
+fn transition_parser<'a>(i: &'a str) -> IResult<&'a str, ParsedTransition> {
     let (i, input) = input_char_parser(i)?;
     let (i, start_state) = state_name_parser(i)?;
     let (i, _) = (blank_space_parser, tag("->"), blank_space_parser).parse(i)?;
@@ -101,17 +104,17 @@ fn transition_parser(i: &str) -> IResult<&str, ParsedTransition> {
     ))
 }
 
-fn transitions_block_parser(i: &str) -> IResult<&str, Vec<ParsedTransition>> {
+fn transitions_block_parser<'a>(i: &'a str) -> IResult<&'a str, Vec<ParsedTransition>> {
     let (i, _) = (line_parser, tag("transitions:"), line_parser).parse(i)?;
     many1(transition_parser).parse(i)
 }
 
-fn start_block_parser(i: &str) -> IResult<&str, String> {
+fn start_block_parser<'a>(i: &'a str) -> IResult<&'a str, String> {
     let (i, _) = (line_parser, tag("start:"), blank_space_parser).parse(i)?;
     state_name_parser(i)
 }
 
-fn definition_parser(i: &str) -> IResult<&str, ParsedFSM> {
+fn definition_parser<'a>(i: &'a str) -> IResult<&'a str, ParsedFSM> {
     let (i, (start_state, states, transitions)) = permutation((
         start_block_parser,
         state_block_parser,
@@ -129,7 +132,7 @@ fn definition_parser(i: &str) -> IResult<&str, ParsedFSM> {
 }
 
 impl ParsedFSM {
-    pub fn parse(i: &str) -> IResult<&str, ParsedFSM> {
+    pub fn parse<'a>(i: &'a str) -> IResult<&'a str, ParsedFSM> {
         definition_parser(i)
     }
 }

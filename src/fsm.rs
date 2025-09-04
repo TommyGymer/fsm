@@ -12,7 +12,7 @@ pub enum State {
 }
 
 impl Display for State {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt<'a>(&self, f: &mut Formatter<'a>) -> fmt::Result {
         match self {
             Self::State(name) => write!(f, "State({})", name),
             Self::AcceptState(name) => write!(f, "AcceptState({})", name),
@@ -115,7 +115,7 @@ pub enum FSMError {
 impl std::error::Error for FSMError {}
 
 impl Display for FSMError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt<'a>(&self, f: &mut Formatter<'a>) -> fmt::Result {
         match self {
             Self::MissingTransition(c, state) => {
                 write!(f, "Missing transition on '{}' from {}", c, state)
